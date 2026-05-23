@@ -1,39 +1,98 @@
+/*
+ * game_state.c
+ *
+ * Server-side game-state management for Anteater Poker.
+ *
+ * This file owns the data and helper functions that describe the current
+ * poker table: connected players, current phase, deck, pot, current turn,
+ * community cards, private hands, and Anteater ability cards.
+ *
+ * The networking code should call these functions instead of directly
+ * changing every field itself. This keeps the official game state centralized
+ * on the server.
+ */
+
 #include <stdio.h>
 #include <string.h>
 
 #include "game_state.h"
 
+/*
+ * init_server_config
+ *
+ * Fills a ServerConfig structure with default startup values.
+ * These defaults can later be overwritten by command-line arguments
+ * in server.c.
+ *
+ * Default port: 10010
+ * Default table name: ZotHouse
+ * Default starting points: 1000
+ */
 void init_server_config(ServerConfig *config)
 {
+    /* Always check pointers before using them to avoid crashes. */
     if (config == NULL) {
         return;
     }
 
-    config->port = 22022;
+    /* Default port range for the project is 10010-10019.
+     * We use 10010 as the default port.
+     */
+    config->port = 10010;
+
+    /* Store the default table name safely inside the fixed-size buffer. */
     snprintf(config->table_name, MAX_TABLE_NAME_LEN, "ZotHouse");
+
+    /* Every player starts with this many points unless changed by --points. */
     config->starting_points = 1000;
+
+    /* Bot support is planned, but default starts with no bots. */
     config->bot_count = 0;
+
+    /* Default log file path for debugging output. */
     snprintf(config->log_path, MAX_LOG_PATH_LEN, "logs/game.log");
 }
 
+/*
+ * init_game_state
+ *
+ * Initializes the main GameState structure for the server.
+ * This sets up the table before any clients join.
+ *
+ * Parameters:
+ *   game      - pointer to the GameState to initialize
+ *   config    - server configuration values
+ *   server_fd - listening socket file descriptor
+ */
 void init_game_state(GameState *game, const ServerConfig *config, int server_fd)
 {
     if (game == NULL || config == NULL) {
         return;
     }
 
+    /* Store the listening socket and copy the server configuration. */
     game->server_fd = server_fd;
     game->config = *config;
+
+    /* New server starts in the lobby with no active hand yet. */
     game->phase = PHASE_LOBBY;
     game->player_count = 0;
+
+    /* -1 means no current player turn is assigned yet. */
     game->current_turn = -1;
+
+    /* Dealer seat starts at 0 for now. This can rotate later. */
     game->dealer_seat = 0;
+
+    /* No bets or community cards exist at startup. */
     game->pot = 0;
     game->current_bet = 0;
     game->community_count = 0;
 
+    /* Initialize the standard 52-card deck. */
     init_deck(&game->deck);
 
+    /* Clear every possible player seat. */
     for (int i = 0; i < MAX_PLAYERS; i++) {
         game->players[i].seat = i;
         game->players[i].socket_fd = -1;
@@ -42,6 +101,7 @@ void init_game_state(GameState *game, const ServerConfig *config, int server_fd)
         game->players[i].current_bet = 0;
         game->players[i].status = PLAYER_EMPTY;
 
+        /* Reset each player's Anteater ability card. */
         game->players[i].ability.type = ABILITY_NONE;
         game->players[i].ability.used = 0;
         game->players[i].ability.owner_seat = i;
@@ -49,11 +109,20 @@ void init_game_state(GameState *game, const ServerConfig *config, int server_fd)
         game->players[i].ability.param = 0;
     }
 
+    /* Mark all community-card slots as invalid until cards are dealt. */
     for (int i = 0; i < COMMUNITY_CARD_SIZE; i++) {
         game->community_cards[i] = create_card(RANK_INVALID, SUIT_INVALID);
     }
 }
 
+/*
+ * find_empty_seat
+ *
+ * Searches the table for the first available seat.
+ *
+ * Returns:
+ *   index of the open seat, or -1 if the table is full or game is NULL.
+ */
 int find_empty_seat(const GameState *game)
 {
     if (game == NULL) {
@@ -69,12 +138,26 @@ int find_empty_seat(const GameState *game)
     return -1;
 }
 
+/*
+ * add_player
+ *
+ * Adds a new connected client as a player at the first empty seat.
+ *
+ * Parameters:
+ *   game      - official game state
+ *   socket_fd - client socket descriptor
+ *   name      - player display name
+ *
+ * Returns:
+ *   assigned seat number, or -1 if no seat is available.
+ */
 int add_player(GameState *game, int socket_fd, const char *name)
 {
     if (game == NULL || name == NULL) {
         return -1;
     }
 
+    /* Find where this player can sit. */
     int seat = find_empty_seat(game);
 
     if (seat < 0) {
@@ -83,6 +166,7 @@ int add_player(GameState *game, int socket_fd, const char *name)
 
     Player *player = &game->players[seat];
 
+    /* Fill in basic player information. */
     player->seat = seat;
     player->socket_fd = socket_fd;
     snprintf(player->name, MAX_NAME_LEN, "%s", name);
@@ -90,6 +174,7 @@ int add_player(GameState *game, int socket_fd, const char *name)
     player->current_bet = 0;
     player->status = PLAYER_CONNECTED;
 
+    /* Player has no ability until a hand starts. */
     player->ability.type = ABILITY_NONE;
     player->ability.used = 0;
     player->ability.owner_seat = seat;
@@ -101,6 +186,15 @@ int add_player(GameState *game, int socket_fd, const char *name)
     return seat;
 }
 
+/*
+ * remove_player
+ *
+ * Clears a player seat when a client leaves or disconnects.
+ *
+ * Parameters:
+ *   game - official game state
+ *   seat - seat number to clear
+ */
 void remove_player(GameState *game, int seat)
 {
     if (game == NULL || seat < 0 || seat >= MAX_PLAYERS) {
@@ -109,6 +203,7 @@ void remove_player(GameState *game, int seat)
 
     Player *player = &game->players[seat];
 
+    /* Only remove seats that are actually occupied. */
     if (player->status != PLAYER_EMPTY) {
         player->socket_fd = -1;
         player->name[0] = '\0';
@@ -123,24 +218,38 @@ void remove_player(GameState *game, int seat)
     }
 }
 
+/*
+ * start_new_hand
+ *
+ * Starts a new poker hand:
+ *   1. Creates and shuffles a fresh deck.
+ *   2. Resets pot, bets, and community cards.
+ *   3. Marks connected players as active.
+ *   4. Deals two private cards and one ability card.
+ *   5. Sets the first active player as the current turn.
+ */
 void start_new_hand(GameState *game)
 {
     if (game == NULL) {
         return;
     }
 
+    /* Fresh deck for every new hand. */
     init_deck(&game->deck);
     shuffle_deck(&game->deck);
 
+    /* New hand starts before the flop. */
     game->phase = PHASE_PREFLOP;
     game->pot = 0;
     game->current_bet = 0;
     game->community_count = 0;
 
+    /* Clear old community cards. */
     for (int i = 0; i < COMMUNITY_CARD_SIZE; i++) {
         game->community_cards[i] = create_card(RANK_INVALID, SUIT_INVALID);
     }
 
+    /* Reset active players for the hand. */
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (game->players[i].status == PLAYER_CONNECTED ||
             game->players[i].status == PLAYER_ACTIVE) {
@@ -152,8 +261,12 @@ void start_new_hand(GameState *game)
         }
     }
 
+    /* Deal two normal private cards and assign ability cards. */
     deal_private_cards(game);
 
+    /* Assign the first active player as current turn.
+     * More advanced logic can later start after blinds/dealer.
+     */
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (game->players[i].status == PLAYER_ACTIVE) {
             game->current_turn = i;
@@ -162,6 +275,16 @@ void start_new_hand(GameState *game)
     }
 }
 
+/*
+ * deal_private_cards
+ *
+ * Deals two normal poker cards to every active player.
+ * Also assigns one temporary Anteater ability card.
+ *
+ * NOTE:
+ *   The ability assignment here is a placeholder. Later, this should be
+ *   replaced by a real Anteater ability deck or random ability distribution.
+ */
 void deal_private_cards(GameState *game)
 {
     if (game == NULL) {
@@ -170,11 +293,12 @@ void deal_private_cards(GameState *game)
 
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (game->players[i].status == PLAYER_ACTIVE) {
+            /* Deal two Texas Hold'em private cards. */
             game->players[i].hand[0] = deal_card(&game->deck);
             game->players[i].hand[1] = deal_card(&game->deck);
 
-            /* Temporary ability assignment.
-             * Later, you can replace this with a real ability deck.
+            /* Temporary ability assignment:
+             * Seats cycle through ability values 1-5.
              */
             game->players[i].ability.type = (AbilityType)((i % 5) + 1);
             game->players[i].ability.used = 0;
@@ -183,6 +307,12 @@ void deal_private_cards(GameState *game)
     }
 }
 
+/*
+ * deal_flop
+ *
+ * Deals the first three community cards.
+ * This should only happen when no community cards have been dealt yet.
+ */
 void deal_flop(GameState *game)
 {
     if (game == NULL) {
@@ -198,6 +328,12 @@ void deal_flop(GameState *game)
     }
 }
 
+/*
+ * deal_turn
+ *
+ * Deals the fourth community card.
+ * This should only happen after the flop exists.
+ */
 void deal_turn(GameState *game)
 {
     if (game == NULL) {
@@ -211,6 +347,12 @@ void deal_turn(GameState *game)
     }
 }
 
+/*
+ * deal_river
+ *
+ * Deals the fifth and final community card.
+ * This should only happen after the turn exists.
+ */
 void deal_river(GameState *game)
 {
     if (game == NULL) {
@@ -224,6 +366,15 @@ void deal_river(GameState *game)
     }
 }
 
+/*
+ * get_player_by_seat
+ *
+ * Returns a pointer to the player in the requested seat.
+ *
+ * Returns:
+ *   Player pointer if the seat is valid and occupied.
+ *   NULL if the seat is invalid or empty.
+ */
 Player *get_player_by_seat(GameState *game, int seat)
 {
     if (game == NULL || seat < 0 || seat >= MAX_PLAYERS) {
@@ -237,6 +388,12 @@ Player *get_player_by_seat(GameState *game, int seat)
     return &game->players[seat];
 }
 
+/*
+ * game_phase_to_string
+ *
+ * Converts the GamePhase enum into a readable string.
+ * Useful for debugging and network state messages.
+ */
 const char *game_phase_to_string(GamePhase phase)
 {
     switch (phase) {
@@ -259,6 +416,12 @@ const char *game_phase_to_string(GamePhase phase)
     }
 }
 
+/*
+ * ability_to_string
+ *
+ * Converts an AbilityType enum into a readable string.
+ * Used when sending a private hand message to a client.
+ */
 const char *ability_to_string(AbilityType ability)
 {
     switch (ability) {
@@ -279,6 +442,16 @@ const char *ability_to_string(AbilityType ability)
     }
 }
 
+/*
+ * build_public_game_state
+ *
+ * Builds a text message describing the public state of the game.
+ * This message can be broadcast to all clients because it does not reveal
+ * private cards.
+ *
+ * Format:
+ *   STAT:-1:phase=<phase>;players=<count>;pot=<pot>;turn=<seat>;community=<count>
+ */
 void build_public_game_state(const GameState *game, char *buffer, int buffer_size)
 {
     if (game == NULL || buffer == NULL || buffer_size <= 0) {
@@ -297,6 +470,17 @@ void build_public_game_state(const GameState *game, char *buffer, int buffer_siz
     );
 }
 
+/*
+ * build_private_hand_message
+ *
+ * Builds a private message for one player containing that player's
+ * two private cards and Anteater ability card.
+ *
+ * This must only be sent to the matching client.
+ *
+ * Format:
+ *   HAND:<seat>:<card1>,<card2>,ability=<ability>
+ */
 void build_private_hand_message(const GameState *game, int seat, char *buffer, int buffer_size)
 {
     if (game == NULL || buffer == NULL || buffer_size <= 0 ||
@@ -309,6 +493,7 @@ void build_private_hand_message(const GameState *game, int seat, char *buffer, i
     char card1[64];
     char card2[64];
 
+    /* Convert card structs into readable strings. */
     card_to_string(player->hand[0], card1, sizeof(card1));
     card_to_string(player->hand[1], card2, sizeof(card2));
 
