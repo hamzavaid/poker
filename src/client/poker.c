@@ -1,14 +1,18 @@
 /*
  * poker.c
  *
- * This is the main terminal-based poker client.
+ * Terminal-based Anteater Poker client.
  *
- * Later, the GTK client GUI can reuse:
- * - client_state.c
- * - socket_client.c
+ * This file lets a player:
+ * - connect to the server
+ * - send LOGIN
+ * - send actions such as START, CHECK, CALL, FOLD, RAISE, and QUIT
+ * - receive and process server messages
  *
- * For now, this file lets us test the client-server connection
- * through the terminal.
+ * This version fixes:
+ * - STAT messages now update ClientState
+ * - HAND messages now update ability/card status
+ * - multiple server messages received at once are processed line by line
  */
 
 #include <stdio.h>
@@ -22,11 +26,114 @@
 /* Default server host if the user does not provide --host. */
 #define DEFAULT_HOST "localhost"
 
-/* Default server port range begins at 10010. */
+/* Default project port. */
 #define DEFAULT_PORT 10010
 
 /* Maximum size for user input typed into the terminal. */
 #define INPUT_SIZE 256
+
+/*
+ * Converts a phase string from the server into a GamePhase enum.
+ *
+ * Example:
+ * "PREFLOP" becomes PHASE_PREFLOP.
+ */
+static GamePhase phase_from_string(const char *phase)
+{
+    /* If phase is NULL, use LOBBY as a safe default. */
+    if (phase == NULL)
+    {
+        return PHASE_LOBBY;
+    }
+
+    /* Compare the server text against each known phase. */
+    if (strcmp(phase, "LOBBY") == 0)
+    {
+        return PHASE_LOBBY;
+    }
+
+    if (strcmp(phase, "PREFLOP") == 0)
+    {
+        return PHASE_PREFLOP;
+    }
+
+    if (strcmp(phase, "FLOP") == 0)
+    {
+        return PHASE_FLOP;
+    }
+
+    if (strcmp(phase, "TURN") == 0)
+    {
+        return PHASE_TURN;
+    }
+
+    if (strcmp(phase, "RIVER") == 0)
+    {
+        return PHASE_RIVER;
+    }
+
+    if (strcmp(phase, "SHOWDOWN") == 0)
+    {
+        return PHASE_SHOWDOWN;
+    }
+
+    if (strcmp(phase, "GAME_OVER") == 0)
+    {
+        return PHASE_GAME_OVER;
+    }
+
+    /* If the phase string is unknown, return LOBBY safely. */
+    return PHASE_LOBBY;
+}
+
+/*
+ * Converts an ability string from the server into an AbilityType enum.
+ *
+ * Example:
+ * "SNIFF" becomes ABILITY_SNIFF.
+ */
+static AbilityType ability_from_string(const char *ability)
+{
+    /* If ability is NULL, use ABILITY_NONE as a safe default. */
+    if (ability == NULL)
+    {
+        return ABILITY_NONE;
+    }
+
+    /* Compare the server text against each known ability. */
+    if (strcmp(ability, "NONE") == 0)
+    {
+        return ABILITY_NONE;
+    }
+
+    if (strcmp(ability, "SNIFF") == 0)
+    {
+        return ABILITY_SNIFF;
+    }
+
+    if (strcmp(ability, "ANT_TRAIL") == 0)
+    {
+        return ABILITY_ANT_TRAIL;
+    }
+
+    if (strcmp(ability, "POSE") == 0)
+    {
+        return ABILITY_POSE;
+    }
+
+    if (strcmp(ability, "LONG_TONGUE") == 0)
+    {
+        return ABILITY_LONG_TONGUE;
+    }
+
+    if (strcmp(ability, "WILD_GRAB") == 0)
+    {
+        return ABILITY_WILD_GRAB;
+    }
+
+    /* If the ability string is unknown, return no ability safely. */
+    return ABILITY_NONE;
+}
 
 /*
  * Parses command-line arguments for the client.
@@ -35,9 +142,6 @@
  * --host <server_host>
  * --port <port_number>
  * --name <player_name>
- *
- * Example:
- * ./bin/poker --host localhost --port 10010 --name Hamza
  */
 static void parse_client_args(
     int argc,
@@ -46,98 +150,299 @@ static void parse_client_args(
     int host_size,
     int *port,
     char *name,
-    int name_size
-)
+    int name_size)
 {
-    /* Set default values before reading command-line arguments. */
+    /* Set default host, name, and port first. */
     snprintf(host, host_size, "%s", DEFAULT_HOST);
     snprintf(name, name_size, "Player");
     *port = DEFAULT_PORT;
 
-    /*
-     * Loop through command-line arguments.
-     * Start at index 1 because argv[0] is the program name.
-     */
-    for (int i = 1; i < argc; i++) {
-        /* Read server host. */
-        if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
+    /* Walk through every command-line argument. */
+    for (int i = 1; i < argc; i++)
+    {
+        /* Read the server host. */
+        if (strcmp(argv[i], "--host") == 0 && i + 1 < argc)
+        {
             snprintf(host, host_size, "%s", argv[++i]);
         }
 
-        /* Read server port. */
-        else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+        /* Read the server port. */
+        else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc)
+        {
             *port = atoi(argv[++i]);
         }
 
-        /* Read player display name. */
-        else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
+        /* Read the player display name. */
+        else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc)
+        {
             snprintf(name, name_size, "%s", argv[++i]);
         }
     }
 }
 
 /*
- * Handles a message received from the server.
+ * Parses a STAT message from the server and updates ClientState.
  *
- * This function currently prints the message and updates basic ClientState fields.
- * Later, the GUI can use this same idea to update buttons, cards, labels, etc.
+ * Expected format:
+ * STAT:-1:phase=PREFLOP;players=1;pot=100;turn=0;community=0
  */
-static void handle_server_message(ClientState *client, const char *message)
+static void parse_stat_message(ClientState *client, const char *message)
 {
-    /* Validate inputs. */
-    if (client == NULL || message == NULL) {
+    /* Buffer for the phase text. */
+    char phase_text[64];
+
+    /* Variables for values sent by the server. */
+    int players = 0;
+    int pot = 0;
+    int turn = -1;
+    int community = 0;
+
+    /* Make sure inputs are valid. */
+    if (client == NULL || message == NULL)
+    {
         return;
     }
 
-    /* Print the raw server message for testing. */
-    printf("Server says: %s", message);
+    /*
+     * Read the values from the STAT message.
+     *
+     * %63[^;] reads the phase text until the semicolon.
+     */
+    int matched = sscanf(
+        message,
+        "STAT:-1:phase=%63[^;];players=%d;pot=%d;turn=%d;community=%d",
+        phase_text,
+        &players,
+        &pot,
+        &turn,
+        &community);
 
     /*
-     * SEAT message format:
-     * SEAT:<seat_number>:Welcome <name>
-     *
-     * Example:
-     * SEAT:0:Welcome Hamza
+     * If sscanf found all five expected values, update ClientState.
      */
-    if (strncmp(message, "SEAT:", 5) == 0) {
+    if (matched == 5)
+    {
+        client->phase = phase_from_string(phase_text);
+        client->player_count = players;
+        client->pot = pot;
+        client->current_turn = turn;
+        client->community_count = community;
+        set_client_status(client, "Received public game state.");
+    }
+    else
+    {
+        set_client_status(client, "Could not parse game state.");
+    }
+}
+
+/*
+ * Parses a HAND message from the server and updates ClientState.
+ *
+ * Expected format:
+ * HAND:0:Jack of Diamonds,Ace of Clubs,ability=SNIFF
+ *
+ * This starter parser stores the ability.
+ * It prints the cards, but does not fully convert card strings back into Card structs yet.
+ */
+static void parse_hand_message(ClientState *client, const char *message)
+{
+    /* Stores the seat number from the HAND message. */
+    int seat = -1;
+
+    /* Stores the two card strings as text. */
+    char card1_text[128];
+    char card2_text[128];
+
+    /* Stores the ability string from the server. */
+    char ability_text[64];
+
+    /* Make sure inputs are valid. */
+    if (client == NULL || message == NULL)
+    {
+        return;
+    }
+
+    /*
+     * Parse the HAND message.
+     *
+     * %127[^,] reads everything until the first comma.
+     * %127[^,] reads everything until the second comma.
+     * %63s reads the ability text after ability=.
+     */
+    int matched = sscanf(
+        message,
+        "HAND:%d:%127[^,],%127[^,],ability=%63s",
+        &seat,
+        card1_text,
+        card2_text,
+        ability_text);
+
+    /*
+     * If parsing worked, update the client's ability and status.
+     */
+    if (matched == 4)
+    {
+        client->seat = seat;
+        client->ability = ability_from_string(ability_text);
+
+        printf("Private card 1: %s\n", card1_text);
+        printf("Private card 2: %s\n", card2_text);
+        printf("Ability card: %s\n", ability_text);
+
+        set_client_status(client, "Received private hand.");
+    }
+    else
+    {
+        set_client_status(client, "Could not parse private hand.");
+    }
+}
+
+/*
+ * Handles one complete server message line.
+ *
+ * Example lines:
+ * INFO:-1:Connected. Send LOGIN:-1:your_name
+ * SEAT:0:Welcome Hamza
+ * STAT:-1:phase=PREFLOP;players=1;pot=0;turn=0;community=0
+ * HAND:0:Jack of Diamonds,Ace of Clubs,ability=SNIFF
+ * OK:-1:Check accepted
+ * ERROR:-1:Not your turn
+ */
+static void handle_single_server_message(ClientState *client, const char *message)
+{
+    /* Make sure inputs are valid. */
+    if (client == NULL || message == NULL || message[0] == '\0')
+    {
+        return;
+    }
+
+    /* Print the raw server message for debugging. */
+    printf("Server says: %s\n", message);
+
+    /*
+     * SEAT message means the server assigned this client a seat.
+     */
+    if (strncmp(message, "SEAT:", 5) == 0)
+    {
         int seat = -1;
 
-        /* Extract the seat number from the message. */
-        if (sscanf(message, "SEAT:%d:", &seat) == 1) {
+        /* Extract the seat number. */
+        if (sscanf(message, "SEAT:%d:", &seat) == 1)
+        {
             client->seat = seat;
             set_client_status(client, "Logged in and seated.");
         }
     }
 
     /*
-     * STAT message means the server sent public game state.
-     * This starter version only updates the status message.
+     * STAT message contains public game state.
      */
-    else if (strncmp(message, "STAT:", 5) == 0) {
-        set_client_status(client, "Received public game state.");
+    else if (strncmp(message, "STAT:", 5) == 0)
+    {
+        parse_stat_message(client, message);
     }
 
     /*
-     * HAND message means the server sent this player's private hand.
-     * This starter version only updates the status message.
+     * HAND message contains the private hand and ability.
      */
-    else if (strncmp(message, "HAND:", 5) == 0) {
-        set_client_status(client, "Received private hand.");
+    else if (strncmp(message, "HAND:", 5) == 0)
+    {
+        parse_hand_message(client, message);
     }
 
     /*
-     * ERROR message means the server rejected something.
+     * ERROR message means the server rejected an action.
      */
-    else if (strncmp(message, "ERROR:", 6) == 0) {
+    else if (strncmp(message, "ERROR:", 6) == 0)
+    {
         set_client_status(client, "Server returned an error.");
     }
 
     /*
-     * OK message means the server accepted a client action.
+     * OK message means the server accepted an action.
      */
-    else if (strncmp(message, "OK:", 3) == 0) {
+    else if (strncmp(message, "OK:", 3) == 0)
+    {
         set_client_status(client, "Action accepted.");
     }
+
+    /*
+     * INFO message is just informational.
+     */
+    else if (strncmp(message, "INFO:", 5) == 0)
+    {
+        set_client_status(client, "Server sent information.");
+    }
+}
+
+/*
+ * Handles a server buffer that may contain multiple messages.
+ *
+ * TCP can combine messages together.
+ * For example, one read may contain:
+ *
+ * STAT:-1:phase=PREFLOP;players=1;pot=0;turn=0;community=0
+ * HAND:0:Jack of Diamonds,Ace of Clubs,ability=SNIFF
+ *
+ * This function splits the buffer by newline and handles each message separately.
+ */
+static void handle_server_buffer(ClientState *client, const char *buffer)
+{
+    /* Local copy because strtok modifies the string. */
+    char copy[CLIENT_BUFFER_SIZE];
+
+    /* Make sure inputs are valid. */
+    if (client == NULL || buffer == NULL)
+    {
+        return;
+    }
+
+    /* Copy the server buffer safely. */
+    snprintf(copy, sizeof(copy), "%s", buffer);
+
+    /* Split the buffer into lines using newline as the delimiter. */
+    char *line = strtok(copy, "\n");
+
+    /* Process every complete line. */
+    while (line != NULL)
+    {
+        handle_single_server_message(client, line);
+        line = strtok(NULL, "\n");
+    }
+}
+
+/*
+ * Receives one buffer from the server and processes all messages inside it.
+ *
+ * Returns:
+ * 1 if messages were received
+ * 0 if server disconnected
+ * -1 if an error occurred
+ */
+static int receive_and_handle_server_messages(ClientState *client)
+{
+    /* Buffer for raw server data. */
+    char buffer[CLIENT_BUFFER_SIZE];
+
+    /* Read data from server. */
+    int bytes_read = receive_from_server(client->socket_fd, buffer, sizeof(buffer));
+
+    /* If server sent data, handle it. */
+    if (bytes_read > 0)
+    {
+        handle_server_buffer(client, buffer);
+        return 1;
+    }
+
+    /* If bytes_read is 0, the server disconnected. */
+    if (bytes_read == 0)
+    {
+        printf("Server disconnected.\n");
+        return 0;
+    }
+
+    /* Otherwise, an error occurred. */
+    return -1;
 }
 
 /*
@@ -157,91 +462,76 @@ static void print_help(void)
 }
 
 /*
- * Converts a user terminal command into a server protocol message.
- *
- * Example:
- * User types:
- * check
- *
- * Client sends:
- * ACTN:<seat>:CHECK
+ * Converts user input into a message that follows the server protocol.
  */
 static void build_action_message(
     const ClientState *client,
     const char *input,
     char *message,
-    int message_size
-)
+    int message_size)
 {
-    /* Validate inputs. */
-    if (client == NULL || input == NULL || message == NULL) {
+    /* Make sure inputs are valid. */
+    if (client == NULL || input == NULL || message == NULL)
+    {
         return;
     }
 
-    /* Start with an empty output message. */
+    /* Clear output message first. */
     message[0] = '\0';
 
-    /*
-     * Send START command.
-     * This tells the server to begin a new hand.
-     */
-    if (strncmp(input, "start", 5) == 0) {
+    /* Start a new hand. */
+    if (strcmp(input, "start") == 0)
+    {
         snprintf(message, message_size, "START:%d:\n", client->seat);
     }
 
-    /*
-     * Send CHECK action.
-     */
-    else if (strncmp(input, "check", 5) == 0) {
+    /* Send CHECK action. */
+    else if (strcmp(input, "check") == 0)
+    {
         snprintf(message, message_size, "ACTN:%d:CHECK\n", client->seat);
     }
 
-    /*
-     * Send CALL action.
-     */
-    else if (strncmp(input, "call", 4) == 0) {
+    /* Send CALL action. */
+    else if (strcmp(input, "call") == 0)
+    {
         snprintf(message, message_size, "ACTN:%d:CALL\n", client->seat);
     }
 
-    /*
-     * Send FOLD action.
-     */
-    else if (strncmp(input, "fold", 4) == 0) {
+    /* Send FOLD action. */
+    else if (strcmp(input, "fold") == 0)
+    {
         snprintf(message, message_size, "ACTN:%d:FOLD\n", client->seat);
     }
 
-    /*
-     * Send RAISE action.
-     *
-     * Expected user format:
-     * raise 50
-     */
-    else if (strncmp(input, "raise", 5) == 0) {
+    /* Send RAISE action. */
+    else if (strncmp(input, "raise", 5) == 0)
+    {
         int amount = 0;
 
-        /* Try to read the raise amount after the word "raise". */
-        if (sscanf(input, "raise %d", &amount) == 1) {
+        /* Extract the raise amount. */
+        if (sscanf(input, "raise %d", &amount) == 1)
+        {
             snprintf(message, message_size, "RAISE:%d:%d\n", client->seat, amount);
-        } else {
+        }
+        else
+        {
             printf("Usage: raise <amount>\n");
         }
     }
 
-    /*
-     * Send QUIT command.
-     * This tells the server the client is leaving.
-     */
-    else if (strncmp(input, "quit", 4) == 0) {
+    /* Send QUIT command. */
+    else if (strcmp(input, "quit") == 0)
+    {
         snprintf(message, message_size, "QUIT:%d:\n", client->seat);
     }
 }
 
 /*
- * Program entry point for the terminal poker client.
+ * Main program entry point.
  */
 int main(int argc, char *argv[])
 {
-    /* Stores all local client information. */
+    /* Stores local client information. */
     ClientState client;
 
     /* Server host name or IP address. */
@@ -250,13 +540,10 @@ int main(int argc, char *argv[])
     /* Player display name. */
     char name[CLIENT_NAME_LEN];
 
-    /* Buffer for messages received from the server. */
-    char buffer[CLIENT_BUFFER_SIZE];
-
-    /* Buffer for user input from the terminal. */
+    /* Stores user terminal input. */
     char input[INPUT_SIZE];
 
-    /* Buffer for messages sent to the server. */
+    /* Stores outgoing message to server. */
     char outgoing[CLIENT_BUFFER_SIZE];
 
     /* Server port number. */
@@ -265,7 +552,7 @@ int main(int argc, char *argv[])
     /* Initialize local client state. */
     init_client_state(&client);
 
-    /* Read command-line options or use defaults. */
+    /* Parse command-line options. */
     parse_client_args(
         argc,
         argv,
@@ -273,125 +560,113 @@ int main(int argc, char *argv[])
         sizeof(host),
         &port,
         name,
-        sizeof(name)
-    );
+        sizeof(name));
 
-    /* Store the player's name in ClientState. */
+    /* Save player name in client state. */
     set_client_name(&client, name);
 
-    /* Show connection information. */
+    /* Print connection details. */
     printf("Connecting to server...\n");
     printf("Host: %s\n", host);
     printf("Port: %d\n", port);
     printf("Name: %s\n", name);
 
-    /* Try to connect to the server. */
+    /* Connect to server. */
     client.socket_fd = connect_to_server(host, port);
 
-    /* Stop if the connection failed. */
-    if (client.socket_fd < 0) {
+    /* Stop if connection fails. */
+    if (client.socket_fd < 0)
+    {
         fprintf(stderr, "Could not connect to server.\n");
         return 1;
     }
 
-    /* Mark the client as connected. */
+    /* Mark client as connected. */
     client.connected = 1;
-
-    /* Update status message. */
     set_client_status(&client, "Connected to server.");
 
     /*
-     * The server should send an INFO message immediately after connection.
+     * Receive initial INFO message.
      */
-    if (receive_from_server(client.socket_fd, buffer, sizeof(buffer)) > 0) {
-        handle_server_message(&client, buffer);
-    }
+    receive_and_handle_server_messages(&client);
 
     /*
-     * Send LOGIN message to the server.
-     *
-     * Format:
-     * LOGIN:-1:<player_name>
-     *
-     * -1 is used because the server has not assigned a seat yet.
+     * Send LOGIN message.
      */
     snprintf(outgoing, sizeof(outgoing), "LOGIN:-1:%s\n", client.player_name);
     send_to_server(client.socket_fd, outgoing);
 
     /*
-     * Receive server response to LOGIN.
-     * Expected response:
-     * SEAT:<seat_number>:Welcome <name>
+     * Receive SEAT response and possibly STAT response.
      */
-    if (receive_from_server(client.socket_fd, buffer, sizeof(buffer)) > 0) {
-        handle_server_message(&client, buffer);
-    }
+    receive_and_handle_server_messages(&client);
 
-    /* Show the available terminal commands. */
+    /* Show available commands. */
     print_help();
 
     /*
-     * Main client input loop.
-     *
-     * This loop waits for the user to type commands,
-     * sends messages to the server,
-     * and prints server responses.
+     * Main input loop.
      */
-    while (1) {
+    while (1)
+    {
         /* Print prompt. */
         printf("poker> ");
 
-        /* Read input from the user. */
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+        /* Read input from user. */
+        if (fgets(input, sizeof(input), stdin) == NULL)
+        {
             break;
         }
 
-        /* Remove the newline character from input. */
+        /* Remove newline from input. */
         input[strcspn(input, "\n")] = '\0';
 
-        /* Show command list. */
-        if (strcmp(input, "help") == 0) {
+        /* Show help command. */
+        if (strcmp(input, "help") == 0)
+        {
             print_help();
             continue;
         }
 
-        /* Print local state. */
-        if (strcmp(input, "state") == 0) {
+        /* Print local client state. */
+        if (strcmp(input, "state") == 0)
+        {
             print_client_state(&client);
             continue;
         }
 
-        /* Convert user input into a server protocol message. */
+        /* Convert input into outgoing server message. */
         build_action_message(&client, input, outgoing, sizeof(outgoing));
 
-        /* If no message was created, the command was unknown. */
-        if (outgoing[0] == '\0') {
+        /* If outgoing message is empty, command was unknown. */
+        if (outgoing[0] == '\0')
+        {
             printf("Unknown command. Type 'help' for options.\n");
             continue;
         }
 
-        /* Send the command to the server. */
+        /* Send command to server. */
         send_to_server(client.socket_fd, outgoing);
 
-        /*
-         * If the user chose quit, leave the loop after sending QUIT.
-         */
-        if (strncmp(input, "quit", 4) == 0) {
+        /* If quitting, stop after sending quit message. */
+        if (strcmp(input, "quit") == 0)
+        {
             break;
         }
 
         /*
-         * Receive the server response after sending an action.
+         * Receive and process server response.
          */
-        if (receive_from_server(client.socket_fd, buffer, sizeof(buffer)) > 0) {
-            handle_server_message(&client, buffer);
-        } else {
-            printf("Server disconnected.\n");
+        int result = receive_and_handle_server_messages(&client);
+
+        /* If server disconnected or error happened, stop. */
+        if (result <= 0)
+        {
             break;
         }
     }
 
-    /* Close the socket connection. */
+    /* Close socket connection. */
     close(client.socket_fd);
 
     /* Mark client as disconnected. */
