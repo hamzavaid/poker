@@ -32,52 +32,37 @@ const char *suit_to_string(Suit suit)
 {
     switch (suit) {
         case SUIT_HEARTS:
-            return "Hearts";
+            return "hearts";
         case SUIT_DIAMONDS:
-            return "Diamonds";
+            return "diamonds";
         case SUIT_CLUBS:
-            return "Clubs";
+            return "clubs";
         case SUIT_SPADES:
-            return "Spades";
+            return "spades";
         default:
-            return "Invalid Suit";
+            return "invalid";
     }
 }
 
 const char *rank_to_string(Rank rank)
 {
     switch (rank) {
-        case RANK_TWO:
-            return "Two";
-        case RANK_THREE:
-            return "Three";
-        case RANK_FOUR:
-            return "Four";
-        case RANK_FIVE:
-            return "Five";
-        case RANK_SIX:
-            return "Six";
-        case RANK_SEVEN:
-            return "Seven";
-        case RANK_EIGHT:
-            return "Eight";
-        case RANK_NINE:
-            return "Nine";
-        case RANK_TEN:
-            return "Ten";
-        case RANK_JACK:
-            return "Jack";
-        case RANK_QUEEN:
-            return "Queen";
-        case RANK_KING:
-            return "King";
-        case RANK_ACE:
-            return "Ace";
-        default:
-            return "Invalid Rank";
+        case RANK_TWO:   return "2";
+        case RANK_THREE: return "3";
+        case RANK_FOUR:  return "4";
+        case RANK_FIVE:  return "5";
+        case RANK_SIX:   return "6";
+        case RANK_SEVEN: return "7";
+        case RANK_EIGHT: return "8";
+        case RANK_NINE:  return "9";
+        case RANK_TEN:   return "10";
+        case RANK_JACK:  return "jack";
+        case RANK_QUEEN: return "queen";
+        case RANK_KING:  return "king";
+        case RANK_ACE:   return "ace";
+        default:         return "invalid";
     }
 }
-
 void card_to_string(Card card, char *buffer, int buffer_size)
 {
     if (buffer == NULL || buffer_size <= 0) {
@@ -85,14 +70,14 @@ void card_to_string(Card card, char *buffer, int buffer_size)
     }
 
     if (!is_valid_card(card)) {
-        snprintf(buffer, buffer_size, "Invalid Card");
+        snprintf(buffer, buffer_size, "invalid_card");
         return;
     }
-
+ 
     snprintf(
         buffer,
         buffer_size,
-        "%s of %s",
+        "%s_of_%s",
         rank_to_string(card.rank),
         suit_to_string(card.suit)
     );
