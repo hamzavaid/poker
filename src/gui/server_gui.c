@@ -5,6 +5,7 @@
  
 #include "game_state.h"
 #include "server_gui.h"
+#include "server_public.h"
  
 #define MAX_PLAYERS 6
 #define MAX_COMM_CARDS 5
@@ -250,6 +251,8 @@ void server_gui_refresh(void)
  
             }
     }
+
+    send_public_state_to_all(g_game);
 }
 
 static void on_start_hand(GtkButton *b, gpointer d)

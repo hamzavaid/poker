@@ -45,6 +45,7 @@ int cards_equal(Card a, Card b);
 const char *suit_to_string(Suit suit);
 const char *rank_to_string(Rank rank);
 void card_to_string(Card card, char *buffer, int buffer_size);
+int string_to_card(const char *s, Card *card);
 void print_card(Card card);
 
 #endif

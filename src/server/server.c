@@ -28,6 +28,7 @@
 #include "game_state.h"
 #include "socket_server.h"
 #include "server_gui.h"
+#include "server_public.h"
 
 // global variable for GTK
 static GameState g_game;
@@ -124,7 +125,7 @@ static int find_seat_by_socket(const GameState *game, int socket_fd)
  * Creates a public GAME_STATE/STAT message and broadcasts it to all clients.
  * This message does not include private cards.
  */
-static void send_public_state_to_all(const GameState *game)
+void send_public_state_to_all(const GameState *game)
 {
     int fds[MAX_PLAYERS];
     int num_clients = 0;

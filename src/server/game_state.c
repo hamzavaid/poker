@@ -14,7 +14,6 @@
 
 #include <stdio.h>
 #include <string.h>
-
 #include "game_state.h"
 
 /*
@@ -450,7 +449,7 @@ const char *ability_to_string(AbilityType ability)
  * private cards.
  *
  * Format:
- *   STAT:-1:phase=<phase>;players=<count>;pot=<pot>;turn=<seat>;community=<count>
+ *   STAT:-1:phase=<phase>;players=<count>;pot=<pot>;turn=<seat>;community=<count>;community_cards=<card1>,<card2>,...
  */
 void build_public_game_state(const GameState *game, char *buffer, int buffer_size)
 {
@@ -458,15 +457,27 @@ void build_public_game_state(const GameState *game, char *buffer, int buffer_siz
         return;
     }
 
+    char community_cards[256] = "";
+    for (int i = 0; i < game->community_count; i++) {
+        char card_str[64];
+        card_to_string(game->community_cards[i], card_str, sizeof(card_str));
+
+        if (i > 0) {
+            strncat(community_cards, ",", sizeof(community_cards) - strlen(community_cards) - 1);
+        }
+        strncat(community_cards, card_str, sizeof(community_cards) - strlen(community_cards) - 1);
+    }
+
     snprintf(
         buffer,
         buffer_size,
-        "STAT:-1:phase=%s;players=%d;pot=%d;turn=%d;community=%d\n",
+        "STAT:-1:phase=%s;players=%d;pot=%d;turn=%d;community=%d;community_cards=%s\n",
         game_phase_to_string(game->phase),
         game->player_count,
         game->pot,
         game->current_turn,
-        game->community_count
+        game->community_count,
+        community_cards
     );
 }
 

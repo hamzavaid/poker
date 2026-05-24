@@ -83,6 +83,48 @@ void card_to_string(Card card, char *buffer, int buffer_size)
     );
 }
 
+int string_to_card(const char *s, Card *card)
+{
+    if (!s || !card) return 0;
+
+    char rank_buf[32], suit_buf[32];
+    if (sscanf(s, "%31[^_]_of_%31s", rank_buf, suit_buf) != 2)
+        return 0;
+
+    /* normalize to lowercase */
+    for (char *p = rank_buf; *p; ++p) *p = (char)tolower((unsigned char)*p);
+    for (char *p = suit_buf; *p; ++p) *p = (char)tolower((unsigned char)*p);
+
+    /* map rank */
+    Rank r;
+    if (strcmp(rank_buf, "2") == 0) r = RANK_TWO;
+    else if (strcmp(rank_buf, "3") == 0) r = RANK_THREE;
+    else if (strcmp(rank_buf, "4") == 0) r = RANK_FOUR;
+    else if (strcmp(rank_buf, "5") == 0) r = RANK_FIVE;
+    else if (strcmp(rank_buf, "6") == 0) r = RANK_SIX;
+    else if (strcmp(rank_buf, "7") == 0) r = RANK_SEVEN;
+    else if (strcmp(rank_buf, "8") == 0) r = RANK_EIGHT;
+    else if (strcmp(rank_buf, "9") == 0) r = RANK_NINE;
+    else if (strcmp(rank_buf, "10") == 0) r = RANK_TEN;
+    else if (strcmp(rank_buf, "jack") == 0) r = RANK_JACK;
+    else if (strcmp(rank_buf, "queen") == 0) r = RANK_QUEEN;
+    else if (strcmp(rank_buf, "king") == 0) r = RANK_KING;
+    else if (strcmp(rank_buf, "ace") == 0) r = RANK_ACE;
+    else return 0;
+
+    /* map suit */
+    Suit su;
+    if (strcmp(suit_buf, "hearts") == 0) su = SUIT_HEARTS;
+    else if (strcmp(suit_buf, "diamonds") == 0) su = SUIT_DIAMONDS;
+    else if (strcmp(suit_buf, "clubs") == 0) su = SUIT_CLUBS;
+    else if (strcmp(suit_buf, "spades") == 0) su = SUIT_SPADES;
+    else return 0;
+
+    card->rank = r;
+    card->suit = su;
+    return 1;
+}
+
 void print_card(Card card)
 {
     char buffer[64];

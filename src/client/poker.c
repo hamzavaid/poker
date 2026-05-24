@@ -254,6 +254,37 @@ static void parse_stat_message(ClientState *client, const char *message)
         client->current_turn = turn;
         client->community_count = community;
 
+        // parse optional community card list
+        const char *p = strstr(message, "community_cards=");
+        if (p) {
+            p += strlen("community_cards=");
+            char tmp[512];
+            // copy until newline or end
+            int i = 0;
+            const char *end = strchr(p, '\n');
+            int len = end ? (int)(end - p) : (int)strlen(p);
+            if (len >= (int)sizeof(tmp)) len = sizeof(tmp) - 1;
+            memcpy(tmp, p, len);
+            tmp[len] = '\0';
+
+            char *tok = strtok(tmp, ",");
+            while (tok && i < COMMUNITY_CARD_SIZE) {
+                // trim whitespace if needed
+                while (*tok == ' ') tok++;
+                Card c;
+                if (string_to_card(tok, &c)) {
+                    client->community_cards[i] = c;
+                    // show image in GUI
+                    char asset_path[128];
+                    build_card_asset_path(asset_path, sizeof asset_path, tok); // token like "ace_of_spades" -> src/assets/ace_of_spades.png
+                    poker_gui_set_community_card(i, asset_path);
+                    i++;
+                }
+                tok = strtok(NULL, ",");
+            }
+            client->community_count = i;
+        }
+
         // update GUI pot
         poker_gui_set_pot(pot);
 

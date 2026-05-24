@@ -66,8 +66,11 @@ typedef struct {
     /* Number of community cards currently revealed. */
     int community_count;
 
+    /* The player's community cards */
+    Card community_cards[COMMUNITY_CARD_SIZE];
+
     /* The player's two private poker cards. */
-    Card private_cards[2];
+    Card private_cards[PRIVATE_HAND_SIZE];
 
     /* The player's Anteater ability card type. */
     AbilityType ability;

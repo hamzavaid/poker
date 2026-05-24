@@ -39,7 +39,11 @@ Start the server:
 
 Start the client:
 
-    poker/bin/poker --host server_name_or_ip --port 22022
+    poker/bin/poker --host server_name_or_ip --port 22022 --name username
+
+Start server and client in same terminal:
+    poker/bin/server --port 22022 --table "ZotHouse" & poker/bin/poker --host server_name_or_ip --port 22022
+    (This can be repeated for any number of clients by repeating the "& poker/bin/poker..." part)
 
 Replace `server_name_or_ip` with the actual host name or IP address of the server.
 
