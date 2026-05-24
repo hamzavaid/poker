@@ -17,6 +17,8 @@
 #define CARD_W_LG       58
 #define CARD_H_LG       83
 
+static int g_server_fd = -1;
+
 static GtkWidget* g_status_label = NULL;
 static GtkWidget* g_pot_label = NULL;
 static GtkWidget* g_stack_label = NULL;
@@ -577,7 +579,7 @@ static GtkWidget* build_center_panel(void)
     return vbox;
 }
 
-void launch_poker_window(void)
+void launch_poker_window(int server_fd)
 {
 	g_server_fd = server_fd;
 	
@@ -615,12 +617,4 @@ void launch_poker_window(void)
 
     poker_gui_set_status("Waiting for players...");
     gtk_widget_show_all(win);
-}
-
-int main(int argc, char* argv[])
-{
-    gtk_init(&argc, &argv);
-    launch_poker_window();
-    gtk_main();
-    return 0;
 }
