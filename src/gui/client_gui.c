@@ -612,11 +612,3 @@ void launch_poker_window(void)
     poker_gui_set_status("Waiting for players...");
     gtk_widget_show_all(win);
 }
-
-int main(int argc, char* argv[])
-{
-    gtk_init(&argc, &argv);
-    launch_poker_window();
-    gtk_main();
-    return 0;
-}
