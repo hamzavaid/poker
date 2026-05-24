@@ -4,6 +4,7 @@
 #include <string.h>
  
 #include "game_state.h"
+#include "server_gui.h"
  
 #define MAX_PLAYERS 6
 #define MAX_COMM_CARDS 5
