@@ -36,9 +36,6 @@ static OpponentSlot g_slots[MAX_PLAYERS - 1];
 //CSS
 static const char* POKER_CSS =
 
-"#poker_window {"
-"  background-color: #0d1520;"
-"}"
 "#rankings_frame {"
 "  background-color: rgba(14,22,34,0.96);"
 "  border: 1px solid #1e4a6e;"
@@ -595,13 +592,22 @@ void launch_poker_window(void)
     gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER);
     g_signal_connect(win, "destroy", G_CALLBACK(on_quit), NULL);
 
-    GtkWidget* root = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_container_set_border_width(GTK_CONTAINER(root), 10);
-    gtk_container_add(GTK_CONTAINER(win), root);
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(win), overlay);
 
-    gtk_box_pack_start(GTK_BOX(root), build_left_panel(), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(root), build_center_panel(), TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(root), build_right_panel(), FALSE, FALSE, 0);
+    GtkWidget *bg = gtk_image_new_from_file("assets/background.jpg");
+    gtk_widget_set_size_request(bg, 1100, 680);
+    gtk_container_add(GTK_CONTAINER(overlay), bg);
+
+    GtkWidget *root = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(root), 10);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), root);
+    gtk_widget_set_halign(root, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(root, GTK_ALIGN_FILL);
+
+    gtk_box_pack_start(GTK_BOX(root), build_left_panel(),   FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(root), build_center_panel(), TRUE,  TRUE,  0);
+    gtk_box_pack_start(GTK_BOX(root), build_right_panel(),  FALSE, FALSE, 0);
 
     poker_gui_set_status("Waiting for players...");
     gtk_widget_show_all(win);
