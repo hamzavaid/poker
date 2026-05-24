@@ -2,7 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-//add #include for other needed files
+
+#include "poker_gui.h"
+#include "socket_client.h"
 
 #define MAX_PLAYERS     6   // 1 local + up to 5 opponents
 #define MAX_COMM_CARDS  5
@@ -14,6 +16,8 @@
 #define CARD_H_MD       63
 #define CARD_W_LG       58
 #define CARD_H_LG       83
+
+static int g_server_fd = -1;
 
 static GtkWidget* g_status_label = NULL;
 static GtkWidget* g_pot_label = NULL;
@@ -284,7 +288,7 @@ static void on_call(GtkButton* b, gpointer d)
 {
     (void)b; (void)d;
     poker_gui_set_status("You called.");
-	//TODO: send CALL to server
+	send_to_server(g_server_fd, "ACTN:-1:CALL\n");
 }
 
 static void on_raise(GtkButton* b, gpointer d)
@@ -293,23 +297,23 @@ static void on_raise(GtkButton* b, gpointer d)
     if (!g_raise_input) return;
     const char* txt = gtk_entry_get_text(GTK_ENTRY(g_raise_input));
     char msg[64];
-    snprintf(msg, sizeof msg, "You raised to %s.", txt);
-    poker_gui_set_status(msg);
-    // TODO: send RAISE amt to server
+    snprintf(msg, sizeof msg, "RAISE:-1:%s\n", txt);
+    poker_gui_set_status("You raised.");
+    send_to_server(g_server_fd, msg);
 }
 
 static void on_check(GtkButton* b, gpointer d)
 {
     (void)b; (void)d;
     poker_gui_set_status("You checked.");
-    // TODO: send CHECK to server
+    send_to_server(g_server_fd, "ACTN:-1:CHECK\n");
 }
 
 static void on_fold(GtkButton* b, gpointer d)
 {
     (void)b; (void)d;
     poker_gui_set_status("You folded.");
-    /* TODO: send FOLD to server */
+    send_to_server(g_server_fd, "ACTN:-1:FOLD\n");
 }
 
 static void on_quit(GtkButton* b, gpointer d)
@@ -575,8 +579,10 @@ static GtkWidget* build_center_panel(void)
     return vbox;
 }
 
-void launch_poker_window(void)
+void launch_poker_window(int server_fd)
 {
+	g_server_fd = server_fd;
+	
     GtkCssProvider* css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css, POKER_CSS, -1, NULL);
     gtk_style_context_add_provider_for_screen(
