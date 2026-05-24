@@ -94,16 +94,29 @@ int connect_to_server(const char *host, int port)
     server_addr.sin_port = htons((unsigned short)port);
 
     /*
-     * Try to connect to the server.
+     * Try to connect to the server with retries.
+     * Retry up to 5 times with 500ms delays so that we can run server and client at same time without worries.
      */
-    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect failed");
-        close(socket_fd);
-        return -1;
+    int max_retries = 5;
+    int retry_delay_ms = 500;
+
+    for (int attempt = 0; attempt < max_retries; attempt++) {
+        if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == 0) {
+            /* Connection successful. */
+            return socket_fd;
+        }
+
+        /* Connection failed. Check if we should retry. */
+        if (attempt < max_retries - 1) {
+            printf("Connection refused. Retrying in %d ms...\n", retry_delay_ms);
+            usleep(retry_delay_ms * 1000); /* Convert ms to microseconds. */
+        }
     }
 
-    /* Return the connected socket file descriptor. */
-    return socket_fd;
+    /* All retries exhausted. */
+    perror("connect failed after retries");
+    close(socket_fd);
+    return -1;
 }
 
 /*
