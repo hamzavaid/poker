@@ -56,7 +56,8 @@ poker/
 │   ├── server
 │   └── poker
 ├── doc/
-│   └── Poker_UserManual.pdf
+│   ├── Poker_UserManual.pdf
+|   └── Poker_SoftwareSpec.pdf
 ├── src/
 │   ├── server/
 │   ├── client/
