@@ -20,13 +20,13 @@ cd poker
 Run the server:
 
 ```sh
-./bin/poker_server --port 10010 --table "ZotHouse"
+./bin/poker_server --port 10010 --table "ZotHouse" &
 ```
 
 Run a client:
 
 ```sh
-./bin/poker_client --host server_name_or_ip --port 10010 --name Player
+./bin/poker_client --host server_name_or_ip --port 10010 --name Player &
 ```
 
 Replace server_name_or_ip with the actual host name or IP address of the server, for example `localhost`.

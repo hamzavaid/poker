@@ -133,12 +133,14 @@ test: all
 	@echo "  $(TEST_SERVER_CLIENT_BIN)"
 	@echo ""
 	@echo "Manual communication test:"
-	@echo "  Terminal 1: ./bin/poker_server --port 10010 --table \"ZotHouse\""
-	@echo "  Terminal 2: ./bin/test_server_client"
+	@echo "  Terminal 1: ./bin/poker_server --port 10010 --table \"ZotHouse\" &"
+	@echo "  Terminal 2: ./bin/test_server_client &"
 	@echo ""
 	@echo "Manual client GUI test:"
-	@echo "  Terminal 1: ./bin/poker_server --port 10010 --table \"ZotHouse\""
-	@echo "  Terminal 2: ./bin/poker_client --host localhost --port 10010 --name Hamza"
+	@echo "  Terminal 1: ./bin/poker_server --port 10010 --table \"ZotHouse\" &"
+	@echo "  Terminal 2: ./bin/poker_client --host localhost --port 10010 --name Hamza &"
+	./$(SERVER_BIN) --port 10010 --table "ZotHouse" &
+	./$(CLIENT_BIN) --host localhost --port 10010 --name Test_Player &
 
 # Required by rubric: make test-gui should exist.
 test-gui: all
@@ -150,7 +152,10 @@ test-gui: all
 	@echo "  ./bin/poker_server --port 10010 --table \"ZotHouse\""
 	@echo ""
 	@echo "Then run this client GUI test in another terminal:"
-	@echo "  ./bin/poker_client --host localhost --port 10010 --name Player"
+	@echo "  ./bin/poker_client --host localhost --port 10010 --name Player &"
+	./$(SERVER_BIN) --port 10010 --table "ZotHouse" &
+	./$(CLIENT_BIN) --host localhost --port 10010 --name Test_Player &
+
 
 # Check required documentation before packaging.
 check-docs:
