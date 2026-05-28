@@ -1,7 +1,7 @@
 #ifndef BOT_H
 #define BOT_H
 
-#include "cards.h" // Needed so the bot knows what a Card is
+#include "cards.h"
 
 /*
  * The bot's local memory of what is happening.
@@ -18,11 +18,9 @@ typedef struct {
     Card community_cards[5];
     int community_count;
 
-    int is_my_turn; // <--- This fixes the "no member named is_my_turn" error
+    int is_my_turn; 
 } BotState;
 
-/* --- Function Prototypes --- */
-/* These fix the "implicit function declaration" errors */
 
 /* Parsing: Updates the BotState when the server broadcasts a message */
 void bot_update_state(BotState *state, const char *server_message);
