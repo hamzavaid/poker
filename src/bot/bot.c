@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -43,6 +45,9 @@ int main(int argc, char *argv[]) {
 
     printf("Bot successfully connected to %s:%d\n", server_ip, port);
 
+    /* Seed random behavior once per run so the bot can sometimes bluff. */
+    srand((unsigned)(time(NULL) ^ (uintptr_t)&state));
+
     //Send the login message to the server
     const char *login_msg = "LOGIN:-1:AnteaterBot\n";
     send(sock_fd, login_msg, strlen(login_msg), 0);
@@ -69,26 +74,35 @@ int main(int argc, char *argv[]) {
         char *line = strtok(buffer, "\n");
         while (line != NULL) {
             
-            // --- PARSE AND UPDATE MEMORY ---
             // Pass every message to your parser to keep the bot's memory accurate
             bot_update_state(&state, line);
 
-            // --- CHECK IF IT IS THE BOT'S TURN ---
+            //Check if it is the bot's turn 
             if (strncmp(line, "STAT", 4) == 0) {
                 
                 
-                // --- CHECK IF IT IS THE BOT'S TURN ---
+                // Check if it is bot turn
                 if (strncmp(line, "STAT", 4) == 0) {
                     if (state.is_my_turn) {
                     printf("Bot analyzing board...\n");
                  
-                    // Ask the AI what to do
+                    // Ask the bot what to do
                     const char *decision = bot_decide_action(&state);
-                     
-                    // Format the response and send it
-                    char response[64];
-                    snprintf(response, sizeof(response), "ACTN:-1:%s\n", decision);
-                     
+
+                    // Format the response and send it. If raising, include amount.
+                    char response[128];
+                    if (decision && strcmp(decision, "RAISE") == 0) {
+                        int amount = bot_calculate_raise(&state);
+                        if (amount <= 0) {
+                            // Fallback to CHECK if raise calculation failed
+                            snprintf(response, sizeof(response), "ACTN:-1:CHECK\n");
+                        } else {
+                            snprintf(response, sizeof(response), "RAISE:-1:%d\n", amount);
+                        }
+                    } else {
+                        snprintf(response, sizeof(response), "ACTN:-1:%s\n", decision ? decision : "CHECK");
+                    }
+
                     printf("Bot sends: %s", response);
                     send(sock_fd, response, strlen(response), 0);
 

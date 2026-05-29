@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "bot.h"
+#include "poker_rules.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -22,6 +23,13 @@ const char* bot_decide_action(const BotState *state) {
     } 
     // If the bot's bet matches the table's bet, it is free to CHECK.
     else {
+        // If we currently have matched the table, consider raising based on hand
+        int raise_amount = bot_calculate_raise(state);
+        if (raise_amount > state->current_bet) {
+            printf("Bot Logic: Bets matched but strong hand. Decided to RAISE to %d.\n", raise_amount);
+            return "RAISE";
+        }
+
         printf("Bot Logic: Bets are matched (%d == %d). Decided to CHECK.\n", 
                state->current_bet, state->table_highest_bet);
         return "CHECK";
@@ -30,12 +38,85 @@ const char* bot_decide_action(const BotState *state) {
 
 /*
  * bot_calculate_raise
- *
- * Returns 0 for now
  */
 int bot_calculate_raise(const BotState *state) {
-    (void)state; // Ignore unused variable warning
-    return 0; 
+    //If NULL state, can't calculate hand strength, so don't raise
+    if (state == NULL) return 0;
+
+
+    // Build a 7-card array: 2 hole cards + community + invalid placeholders
+    Card cards[7];
+    // Initialize all cards to invalid first
+    for (int i = 0; i < 7; ++i) {
+        cards[i] = create_card(RANK_INVALID, SUIT_INVALID);
+    }
+    // Fill in the bot's hole cards and any community cards on the table
+    cards[0] = state->my_cards[0];
+    cards[1] = state->my_cards[1];
+    for (int i = 0; i < state->community_count && i < 5; ++i) {
+        cards[i + 2] = state->community_cards[i];
+    }
+
+
+    PokerHandValue val;
+    poker_evaluate_hand(cards, &val);
+
+    int base = state->table_highest_bet;
+    int max_total = state->current_bet + state->points;
+    int desired = base; // new total bet (not amount to add)
+
+    //Chance tfor the bot randomly decide to make an aggressive move regardless of hand strength, to GAMBLE YAAYYYYY
+    int chance = rand() % 100;
+    if (chance < 1 && max_total > state->current_bet) {
+        // 1% chance to go all-in regardless of hand strength
+        desired = max_total;
+        printf("Bot Logic: Random all-in triggered (%d%% chance).\n", chance);
+    } else if (chance < 15 && max_total > state->current_bet) {
+        // 15% chance to make an aggressive raise
+        int extra = state->points / 2;
+        if (extra < 40) {
+            extra = 40;
+        }
+        desired = state->table_highest_bet + extra;
+        if (desired > max_total) desired = max_total;
+        printf("Bot Logic: Random aggressive raise triggered (%d%% chance).\n", chance);
+    } else {
+        // Normal hand-strength-based raise behavior
+        switch (val.rank) {
+            case HAND_RANK_STRAIGHT_FLUSH:
+            case HAND_RANK_FOUR_OF_A_KIND:
+                desired = base + (state->pot / 2 > 50 ? state->pot / 2 : 50);
+                break;
+            case HAND_RANK_FULL_HOUSE:
+                desired = base + (state->pot / 3 > 30 ? state->pot / 3 : 30);
+                break;
+            case HAND_RANK_FLUSH:
+            case HAND_RANK_STRAIGHT:
+            case HAND_RANK_THREE_OF_A_KIND:
+                desired = base + (state->pot / 4 > 15 ? state->pot / 4 : 15);
+                break;
+            case HAND_RANK_TWO_PAIR:
+                desired = base + 10;
+                break;
+            case HAND_RANK_PAIR:
+                desired = base + 5;
+                break;
+            case HAND_RANK_HIGH_CARD:
+            default:
+                return 0; // don't raise on weak hands
+        }
+    }
+
+    // Ensure the desired total is at least one more than current table bet
+    if (desired <= state->table_highest_bet) desired = state->table_highest_bet + 1;
+
+    // Cap to the bot's stack
+    if (desired > max_total) desired = max_total;
+
+    // If desired ends up being no change, don't raise
+    if (desired <= state->current_bet) return 0;
+
+    return desired;
 }
 
 
